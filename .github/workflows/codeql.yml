@@ -2,7 +2,6 @@ name: "CodeQL action"
 
 on:
   push:
-    branches: [main, releases/v*]
   pull_request:
     # Run checks on reopened draft PRs to support triggering PR checks on draft PRs that were opened
     # by other workflows.
@@ -18,6 +17,7 @@ defaults:
 
 env:
   CODEQL_ACTION_TESTING_ENVIRONMENT: codeql-action-pr-checks
+  CODEQL_ACTION_SKIP_FILE_COVERAGE: true
 
 jobs:
   # Identify the CodeQL tool versions to use in the analysis job.
