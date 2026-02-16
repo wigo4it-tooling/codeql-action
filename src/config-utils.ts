@@ -772,6 +772,7 @@ export async function getOverlayDatabaseMode(
     ));
     if (
       diskUsage &&
+      (await features.getValue(Feature.OverlayAnalysisStatusCheck)) &&
       (await shouldSkipOverlayAnalysis(codeql, languages, diskUsage, logger))
     ) {
       logger.info(
