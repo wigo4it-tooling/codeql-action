@@ -40,6 +40,8 @@ import {
 import {
   getDiffInformedAnalysisBranches,
   getPullRequestEditedDiffRanges,
+  readDiffRangesJsonFile,
+  shouldPerformDiffInformedAnalysis,
   writeDiffRangesJsonFile,
 } from "./diff-informed-analysis-utils";
 import { EnvVar } from "./environment";
@@ -436,6 +438,22 @@ async function run(startedAt: Date) {
       await sendStatusReport(statusReportBase);
     }
     return;
+  }
+
+  // If overlay is enabled and diff-informed analysis should have run but
+  // failed to produce output, revert to non-overlay analysis. Overlay
+  // without diff-informed is an untested combination that can produce
+  // inaccurate results.
+  if (
+    config.overlayDatabaseMode === OverlayDatabaseMode.Overlay &&
+    (await shouldPerformDiffInformedAnalysis(codeql, features, logger)) &&
+    readDiffRangesJsonFile(logger) === undefined
+  ) {
+    logger.warning(
+      "Diff-informed analysis is not available for this pull request. " +
+        `Reverting overlay database mode to ${OverlayDatabaseMode.None}.`,
+    );
+    config.overlayDatabaseMode = OverlayDatabaseMode.None;
   }
 
   let overlayBaseDatabaseStats: OverlayBaseDatabaseDownloadStats | undefined;
