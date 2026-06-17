@@ -523,18 +523,22 @@ async function getCodeQLForCmd(
       return cmd;
     },
     async getVersion() {
-      let result = util.getCachedCodeQlVersion(cmd);
-      if (result === undefined) {
+      async function runCliVersion() {
         const output = await runCli(cmd, ["version", "--format=json"], {
           noStreamStdout: true,
         });
         try {
-          result = JSON.parse(output) as VersionInfo;
+          return JSON.parse(output) as VersionInfo;
         } catch {
           throw Error(
             `Invalid JSON output from \`version --format=json\`: ${output}`,
           );
         }
+      }
+
+      let result = util.getCachedCodeQlVersion(cmd);
+      if (result === undefined) {
+        result = await runCliVersion();
         util.cacheCodeQlVersion(cmd, result);
       }
       return result;
@@ -736,8 +740,7 @@ async function getCodeQLForCmd(
       await runCli(cmd, args);
     },
     async resolveLanguages() {
-      let result = util.getCachedCodeQlResolveLanguages(cmd);
-      if (result === undefined) {
+      async function runCliResolveLanguages() {
         const codeqlArgs = [
           "resolve",
           "languages",
@@ -747,12 +750,17 @@ async function getCodeQLForCmd(
         const output = await runCli(cmd, codeqlArgs);
 
         try {
-          result = JSON.parse(output) as ResolveLanguagesOutput;
+          return JSON.parse(output) as ResolveLanguagesOutput;
         } catch (e) {
           throw new Error(
             `Unexpected output from codeql resolve languages: ${e}`,
           );
         }
+      }
+
+      let result = util.getCachedCodeQlResolveLanguages(cmd);
+      if (result === undefined) {
+        result = await runCliResolveLanguages();
         util.cacheCodeQlResolveLanguages(cmd, result);
       }
       return result;
