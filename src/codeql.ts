@@ -12,6 +12,11 @@ import {
   runTool,
 } from "./actions-util";
 import * as api from "./api-client";
+import {
+  cacheCommandOutput,
+  getCachedCommandOutput,
+  CommandCacheKey,
+} from "./cache";
 import { CliError, wrapCliConfigurationError } from "./cli-errors";
 import { appendExtraQueryExclusions, type Config } from "./config-utils";
 import { DocUrl } from "./doc-url";
@@ -22,6 +27,7 @@ import {
   FeatureEnablement,
 } from "./feature-flags";
 import { isAnalyzingDefaultBranch } from "./git-utils";
+import * as json from "./json";
 import { Language } from "./languages";
 import { Logger } from "./logging";
 import { writeBaseDatabaseOidsFile, writeOverlayChangesFile } from "./overlay";
@@ -234,12 +240,38 @@ export interface VersionInfo {
   overlayVersion?: number;
 }
 
+export function isVersionInfo(x: unknown): x is VersionInfo {
+  return (
+    json.isObject(x) &&
+    json.validateSchema(
+      {
+        version: json.string,
+        features: json.undefinable(json.object),
+        overlayVersion: json.undefinable(json.number),
+      },
+      x,
+    )
+  );
+}
+
 export interface ResolveDatabaseOutput {
   overlayBaseSpecifier?: string;
 }
 
 export interface ResolveLanguagesOutput {
   [language: string]: [string];
+}
+
+export function isResolveLanguagesOutput(
+  x: unknown,
+): x is ResolveLanguagesOutput {
+  return (
+    json.isObject(x) &&
+    Object.values(x).every(
+      (value) =>
+        json.isArray(value) && value.every((item) => json.isString(item)),
+    )
+  );
 }
 
 export interface BetterResolveLanguagesOutput {
@@ -507,6 +539,31 @@ export async function getCodeQLForTesting(
 }
 
 /**
+ * Returns the cached output for a `codeql` command, resolving through the three
+ * caching tiers in order: the in-memory memo, then the temporary file (both via
+ * {@link getCachedCommandOutput}), and finally the CLI itself by invoking `run`
+ * on a miss and persisting its result back into the first two tiers.
+ *
+ * @param key The cache key identifying the command's output.
+ * @param cmd The path to the CodeQL CLI the output is obtained from.
+ * @param run Invokes the CLI to compute the output when it isn't cached.
+ * @param validate Optional type guard for values loaded from the temporary file.
+ */
+async function getCachedOrRun<T>(
+  key: string,
+  cmd: string,
+  run: () => Promise<T>,
+  validate?: (output: unknown) => output is T,
+): Promise<T> {
+  let result = getCachedCommandOutput<T>(key, cmd, validate);
+  if (result === undefined) {
+    result = await run();
+    cacheCommandOutput(key, cmd, result);
+  }
+  return result;
+}
+
+/**
  * Return a CodeQL object for CodeQL CLI access.
  *
  * @param cmd Path to CodeQL CLI
@@ -523,20 +580,15 @@ async function getCodeQLForCmd(
       return cmd;
     },
     async getVersion() {
-      async function runCliVersion() {
-        return await runCliJson<VersionInfo>(
-          cmd,
-          ["version", "--format=json"],
-          { noStreamStdout: true },
-        );
-      }
-
-      let result = util.getCachedCodeQlVersion(cmd);
-      if (result === undefined) {
-        result = await runCliVersion();
-        util.cacheCodeQlVersion(cmd, result);
-      }
-      return result;
+      return getCachedOrRun(
+        CommandCacheKey.Version,
+        cmd,
+        () =>
+          runCliJson<VersionInfo>(cmd, ["version", "--format=json"], {
+            noStreamStdout: true,
+          }),
+        isVersionInfo,
+      );
     },
     async printVersion() {
       // Reuse the cached version information rather than invoking the CLI again.
@@ -735,21 +787,18 @@ async function getCodeQLForCmd(
       await runCli(cmd, args);
     },
     async resolveLanguages() {
-      async function runCliResolveLanguages() {
-        return await runCliJson<ResolveLanguagesOutput>(cmd, [
-          "resolve",
-          "languages",
-          "--format=json",
-          ...getExtraOptionsFromEnv(["resolve", "languages"]),
-        ]);
-      }
-
-      let result = util.getCachedCodeQlResolveLanguages(cmd);
-      if (result === undefined) {
-        result = await runCliResolveLanguages();
-        util.cacheCodeQlResolveLanguages(cmd, result);
-      }
-      return result;
+      return getCachedOrRun(
+        CommandCacheKey.ResolveLanguages,
+        cmd,
+        () =>
+          runCliJson<ResolveLanguagesOutput>(cmd, [
+            "resolve",
+            "languages",
+            "--format=json",
+            ...getExtraOptionsFromEnv(["resolve", "languages"]),
+          ]),
+        isResolveLanguagesOutput,
+      );
     },
     async betterResolveLanguages(
       {
